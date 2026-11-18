@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Impresión Fotos</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --azul: #1e3d5c;
+            --azul-claro: #2b5278;
+            --azul-suave: #dfe7ef;
+            --arena: #c9a96e;
+            --arena-claro: #f5eed9;
+            --arena-bg: #faf7f1;
+            --blanco: #ffffff;
+            --texto: #1a2a3a;
+            --texto-suave: #7a8a9a;
+            --borde: #e4ddd2;
+            --peligro: #c0392b;
+            --sombra: 0 1px 8px rgba(30,61,92,0.07);
+            --radio: 12px;
+            --radio-sm: 8px;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background: var(--arena-bg);
+            color: var(--texto);
+            min-height: 100dvh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 16px 16px 40px;
+        }
+
+        .header { text-align: center; margin-bottom: 14px; }
+        .header h1 {
+            font-size: 1.05rem; font-weight: 500;
+            letter-spacing: 0.08em; text-transform: uppercase;
+            color: var(--azul);
+        }
+        .header p { font-size: 0.72rem; color: var(--texto-suave); margin-top: 2px; font-weight: 300; }
+
+        .canvas-card {
+            width: 100%; max-width: 420px;
+            background: var(--blanco); border-radius: var(--radio);
+            box-shadow: var(--sombra); overflow: hidden;
+        }
+        .canvas-wrap {
+            position: relative; width: 100%; aspect-ratio: 3/2;
+            background: var(--azul-suave); touch-action: none; cursor: grab;
+        }
+        .canvas-wrap:active { cursor: grabbing; }
+        canvas { display: block; width: 100%; height: 100%; }
+        .placeholder {
+            position: absolute; inset: 0; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; gap: 8px;
+            color: var(--texto-suave); pointer-events: none;
+        }
+        .placeholder svg { opacity: 0.3; }
+        .placeholder span { font-size: 0.82rem; }
+        .hint {
+            display: none; position: absolute; bottom: 8px; left: 50%;
+            transform: translateX(-50%); background: rgba(30,61,92,0.72);
+            color: white; font-size: 0.62rem; padding: 4px 10px;
+            border-radius: 20px; pointer-events: none; white-space: nowrap;
+        }
+        .hint.visible { display: block; }
+        .badge-size {
+            position: absolute; top: 8px; right: 8px;
+            background: rgba(30,61,92,0.6); color: white;
+            font-size: 0.58rem; padding: 2px 7px; border-radius: 10px;
+            pointer-events: none; letter-spacing: 0.03em;
+        }
+
+        .seccion { width: 100%; max-width: 420px; margin-top: 12px; }
+        .seccion-titulo {
+            font-size: 0.68rem; font-weight: 500; text-transform: uppercase;
+            letter-spacing: 0.06em; color: var(--texto-suave);
+            margin-bottom: 6px; padding-left: 2px;
+            display: flex; align-items: center; gap: 6px;
+        }
+
+        .mascaras-scroll {
+            display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px;
+            scrollbar-width: none;
+        }
+        .mascaras-scroll::-webkit-scrollbar { display: none; }
+        .mascara-item {
+            flex: 0 0 auto; width: 68px; height: 46px; border-radius: var(--radio-sm);
+            border: 2px solid transparent; overflow: hidden; cursor: pointer;
+            background: var(--azul-suave); position: relative;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .mascara-item.activa {
+            border-color: var(--arena);
+            box-shadow: 0 0 0 2px rgba(201,169,110,0.25);
+        }
+        .mascara-item img { width: 100%; height: 100%; object-fit: cover; }
+        .mascara-label {
+            position: absolute; bottom: 0; left: 0; right: 0;
+            background: rgba(30,61,92,0.72); color: white;
+            font-size: 0.46rem; text-align: center; padding: 2px 0;
+            overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+        }
+        .mascara-delete {
+            position: absolute; top: 2px; right: 2px; width: 16px; height: 16px;
+            border-radius: 50%; background: rgba(192,57,43,0.85); color: white;
+            font-size: 0.55rem; border: none; cursor: pointer;
+            display: none; align-items: center; justify-content: center;
+            line-height: 1;
+        }
+        .mascara-item:hover .mascara-delete,
+        .mascara-item:active .mascara-delete { display: flex; }
+        .mascara-add {
+            flex: 0 0 auto; width: 68px; height: 46px; border-radius: var(--radio-sm);
+            border: 2px dashed var(--borde); background: transparent;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; color: var(--texto-suave); font-size: 1.2rem;
+            transition: border-color 0.2s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .mascara-add:hover { border-color: var(--arena); color: var(--arena); }
+
+        /* --- Adjustments panel --- */
+        .panel-toggle {
+            width: 100%; max-width: 420px; margin-top: 14px;
+            display: flex; align-items: center; gap: 6px;
+            background: none; border: none; cursor: pointer;
+            color: var(--texto-suave); font-family: inherit;
+            font-size: 0.72rem; font-weight: 500; text-transform: uppercase;
+            letter-spacing: 0.05em; padding: 0;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .panel-toggle svg {
+            width: 14px; height: 14px; transition: transform 0.2s;
+        }
+        .panel-toggle.abierto svg { transform: rotate(90deg); }
+        .panel-collapsible {
+            width: 100%; max-width: 420px; overflow: hidden;
+            max-height: 0; transition: max-height 0.35s ease;
+        }
+        .panel-collapsible.abierto { max-height: 800px; }
+        .panel-body {
+            margin-top: 10px; background: var(--blanco);
+            border-radius: var(--radio); box-shadow: var(--sombra);
+            padding: 14px; display: flex; flex-direction: column; gap: 12px;
+        }
+
+        .slider-row {
+            display: flex; align-items: center; gap: 8px;
+        }
+        .slider-label {
+            font-size: 0.68rem; font-weight: 500; color: var(--texto-suave);
+            min-width: 70px; text-transform: uppercase; letter-spacing: 0.03em;
+        }
+        .slider-row input[type="range"] {
+            flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
+            background: var(--azul-suave); border-radius: 2px; outline: none;
+        }
+        .slider-row input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 18px; height: 18px;
+            border-radius: 50%; background: var(--azul);
+            border: 2px solid var(--blanco); box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+            cursor: pointer;
+        }
+        .slider-row input[type="range"]::-moz-range-thumb {
+            width: 18px; height: 18px; border-radius: 50%;
+            background: var(--azul); border: 2px solid var(--blanco);
+            box-shadow: 0 1px 4px rgba(0,0,0,0.15); cursor: pointer;
+        }
+        .slider-val {
+            font-size: 0.68rem; font-weight: 600; color: var(--azul);
+            min-width: 28px; text-align: right;
+        }
+        .toggle-row {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 4px 0;
+        }
+        .toggle-label {
+            font-size: 0.72rem; font-weight: 500; color: var(--texto);
+        }
+        .toggle-switch {
+            position: relative; width: 42px; height: 24px;
+            background: var(--azul-suave); border-radius: 12px;
+            cursor: pointer; transition: background 0.2s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .toggle-switch.on { background: var(--arena); }
+        .toggle-switch::after {
+            content: ''; position: absolute; top: 2px; left: 2px;
+            width: 20px; height: 20px; border-radius: 50%;
+            background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+            transition: transform 0.2s;
+        }
+        .toggle-switch.on::after { transform: translateX(18px); }
+        .btn-reset-ajustes {
+            align-self: center; background: none; border: 1px solid var(--borde);
+            border-radius: var(--radio-sm); padding: 6px 16px;
+            font-family: inherit; font-size: 0.68rem; font-weight: 500;
+            color: var(--texto-suave); cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .btn-reset-ajustes:active { background: var(--azul-suave); }
+
+        /* --- Controls --- */
+        .controles {
+            width: 100%; max-width: 420px; margin-top: 14px;
+            display: flex; flex-direction: column; gap: 10px;
+        }
+        .fila { display: flex; gap: 8px; }
+        .btn {
+            display: inline-flex; align-items: center; justify-content: center;
+            padding: 12px 18px; border: none; border-radius: var(--radio);
+            font-family: inherit; font-size: 0.82rem; font-weight: 500;
+            cursor: pointer; transition: transform 0.1s, opacity 0.15s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .btn:active { transform: scale(0.97); }
+        .btn:disabled { opacity: 0.35; pointer-events: none; }
+        .btn-primario { background: var(--azul); color: var(--blanco); flex: 1; }
+        .btn-secundario {
+            background: var(--blanco); color: var(--azul);
+            border: 1px solid var(--borde); box-shadow: var(--sombra);
+        }
+        .btn-imprimir {
+            background: var(--arena); color: var(--blanco);
+            font-size: 0.92rem; font-weight: 600; padding: 14px;
+            box-shadow: 0 2px 10px rgba(201,169,110,0.25);
+        }
+        .fila-copias {
+            display: flex; align-items: center; justify-content: center; gap: 16px; padding: 2px 0;
+        }
+        .btn-copias {
+            width: 38px; height: 38px; border-radius: 50%;
+            border: 1.5px solid var(--borde); background: var(--blanco);
+            color: var(--azul); font-size: 1.1rem; font-weight: 500;
+            cursor: pointer; display: flex; align-items: center;
+            justify-content: center; box-shadow: var(--sombra);
+            -webkit-tap-highlight-color: transparent;
+        }
+        .btn-copias:active { transform: scale(0.92); }
+        .num-copias {
+            font-size: 1.25rem; font-weight: 600; min-width: 30px;
+            text-align: center; color: var(--azul);
+        }
+        .estado {
+            text-align: center; font-size: 0.78rem; min-height: 1.2em;
+            color: var(--texto-suave);
+        }
+        .estado.ok { color: #3a9a5c; }
+        .estado.error { color: var(--peligro); }
+        input[type="file"] { display: none; }
+
+        /* --- Settings panel --- */
+        .campo { display: flex; flex-direction: column; gap: 4px; }
+        .campo-label {
+            font-size: 0.7rem; font-weight: 500; color: var(--texto-suave);
+            text-transform: uppercase; letter-spacing: 0.04em;
+        }
+        .campo select, .campo .btn-subir-perfil {
+            font-family: inherit; font-size: 0.82rem; padding: 10px 12px;
+            border: 1.5px solid var(--borde); border-radius: var(--radio-sm);
+            background: var(--blanco); color: var(--texto);
+            appearance: none; -webkit-appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237a8a9a' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+        }
+        .campo select:focus { outline: none; border-color: var(--arena); }
+        .campo .fila-perfil { display: flex; gap: 6px; }
+        .campo .fila-perfil select { flex: 1; }
+        .btn-subir-perfil {
+            flex: 0 0 auto; cursor: pointer; display: flex;
+            align-items: center; justify-content: center;
+            background: var(--azul-suave) !important; border: 1.5px solid var(--borde) !important;
+            padding: 10px 12px !important; color: var(--azul) !important;
+            font-weight: 500 !important; background-image: none !important;
+        }
+
+        /* --- Overlay --- */
+        .overlay-cargando {
+            display: none; position: fixed; inset: 0;
+            background: rgba(250,247,241,0.92);
+            backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+            z-index: 100; align-items: center; justify-content: center;
+            flex-direction: column; gap: 14px;
+        }
+        .overlay-cargando.visible { display: flex; }
+        .spinner {
+            width: 32px; height: 32px; border: 3px solid var(--azul-suave);
+            border-top-color: var(--azul); border-radius: 50%;
+            animation: girar 0.7s linear infinite;
+        }
+        .overlay-cargando span { font-size: 0.82rem; color: var(--azul); }
+        @keyframes girar { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>Impresión de Fotos</h1>
+    <p>Selecciona, ajusta e imprime</p>
+</div>
+
+<div class="canvas-card">
+    <div class="canvas-wrap" id="canvasWrap">
+        <canvas id="canvas" width="1800" height="1200"></canvas>
+        <div class="placeholder" id="placeholder">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <path d="m21 15-5-5L5 21"/>
+            </svg>
+            <span>Selecciona una foto</span>
+        </div>
+        <div class="hint" id="hint">Arrastra y pellizca para ajustar</div>
+        <div class="badge-size">10 × 15 cm · 300 DPI</div>
+    </div>
+</div>
+
+<!-- Máscaras -->
+<div class="seccion" id="seccionMascaras" style="display:none;">
+    <div class="seccion-titulo">Marco / Plantilla</div>
+    <div class="mascaras-scroll" id="mascarasScroll"></div>
+</div>
+<input type="file" id="inputMascara" accept=".png">
+
+<!-- Ajustes de foto -->
+<button class="panel-toggle" id="fotoToggle">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+    Ajustes de foto
+</button>
+<div class="panel-collapsible" id="fotoPanel">
+    <div class="panel-body">
+        <div class="slider-row">
+            <span class="slider-label">Luminosidad</span>
+            <input type="range" id="slBrillo" min="-100" max="100" value="0">
+            <span class="slider-val" id="valBrillo">0</span>
+        </div>
+        <div class="slider-row">
+            <span class="slider-label">Contraste</span>
+            <input type="range" id="slContraste" min="-100" max="100" value="0">
+            <span class="slider-val" id="valContraste">0</span>
+        </div>
+        <div class="slider-row">
+            <span class="slider-label">Saturación</span>
+            <input type="range" id="slSaturacion" min="-100" max="100" value="0">
+            <span class="slider-val" id="valSaturacion">0</span>
+        </div>
+        <div class="slider-row">
+            <span class="slider-label">Viveza</span>
+            <input type="range" id="slViveza" min="-100" max="100" value="0">
+            <span class="slider-val" id="valViveza">0</span>
+        </div>
+        <div class="slider-row">
+            <span class="slider-label">Color</span>
+            <input type="range" id="slTono" min="-180" max="180" value="0">
+            <span class="slider-val" id="valTono">0°</span>
+        </div>
+        <div class="slider-row">
+            <span class="slider-label">Enfoque</span>
+            <input type="range" id="slEnfoque" min="0" max="100" value="0">
+            <span class="slider-val" id="valEnfoque">0</span>
+        </div>
+        <div class="slider-row">
+            <span class="slider-label">Claridad</span>
+            <input type="range" id="slClaridad" min="0" max="100" value="0">
+            <span class="slider-val" id="valClaridad">0</span>
+        </div>
+        <div class="slider-row">
+            <span class="slider-label">Textura</span>
+            <input type="range" id="slTextura" min="0" max="100" value="0">
+            <span class="slider-val" id="valTextura">0</span>
+        </div>
+        <div class="toggle-row">
+            <span class="toggle-label">Blanco y negro</span>
+            <div class="toggle-switch" id="toggleBN"></div>
+        </div>
+        <button class="btn-reset-ajustes" id="btnResetAjustes">Restablecer ajustes</button>
+    </div>
+</div>
+
+<!-- Controles -->
+<div class="controles">
+    <div class="fila">
+        <button class="btn btn-primario" id="btnFoto">Elegir foto</button>
+        <button class="btn btn-secundario" id="btnReset" disabled>Resetear</button>
+    </div>
+    <input type="file" id="inputFoto" accept="image/*">
+
+    <div class="fila-copias">
+        <button class="btn-copias" id="btnMenos">−</button>
+        <span class="num-copias" id="numCopias">1</span>
+        <button class="btn-copias" id="btnMas">+</button>
+    </div>
+
+    <button class="btn btn-imprimir" id="btnImprimir" disabled>Imprimir</button>
+    <div class="estado" id="estado"></div>
+</div>
+
+<!-- Ajustes de impresión -->
+<button class="panel-toggle" id="ajustesToggle">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+    Ajustes de impresión
+</button>
+<div class="panel-collapsible" id="ajustesPanel">
+    <div class="panel-body">
+        <div class="campo">
+            <label class="campo-label">Impresora</label>
+            <select id="selectImpresora">
+                <option value="">Cargando…</option>
+            </select>
+        </div>
+        <div class="campo">
+            <label class="campo-label">Perfil de color (ICC)</label>
+            <div class="fila-perfil">
+                <select id="selectPerfil">
+                    <option value="">Cargando…</option>
+                </select>
+                <button class="btn-subir-perfil" id="btnSubirPerfil" title="Subir perfil ICC">+</button>
+            </div>
+        </div>
+        <input type="file" id="inputPerfil" accept=".icc,.icm">
+    </div>
+</div>
+
+<div class="overlay-cargando" id="overlay">
+    <div class="spinner"></div>
+    <span>Enviando a imprimir…</span>
+</div>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const canvasWrap = document.getElementById("canvasWrap");
+const inputFoto = document.getElementById("inputFoto");
+const inputMascara = document.getElementById("inputMascara");
+const inputPerfil = document.getElementById("inputPerfil");
+const btnFoto = document.getElementById("btnFoto");
+const btnReset = document.getElementById("btnReset");
+const btnImprimir = document.getElementById("btnImprimir");
+const btnMenos = document.getElementById("btnMenos");
+const btnMas = document.getElementById("btnMas");
+const numCopias = document.getElementById("numCopias");
+const estado = document.getElementById("estado");
+const placeholder = document.getElementById("placeholder");
+const hint = document.getElementById("hint");
+const overlay = document.getElementById("overlay");
+const seccionMascaras = document.getElementById("seccionMascaras");
+const mascarasScroll = document.getElementById("mascarasScroll");
+const selectImpresora = document.getElementById("selectImpresora");
+const selectPerfil = document.getElementById("selectPerfil");
+const btnSubirPerfil = document.getElementById("btnSubirPerfil");
+const ajustesToggle = document.getElementById("ajustesToggle");
+const ajustesPanel = document.getElementById("ajustesPanel");
+const fotoToggle = document.getElementById("fotoToggle");
+const fotoPanel = document.getElementById("fotoPanel");
+const toggleBN = document.getElementById("toggleBN");
+const btnResetAjustes = document.getElementById("btnResetAjustes");
+
+const CW = 1800, CH = 1200;
+const ESCALA_MIN = 1.0, ESCALA_MAX = 5.0;
+
+let copias = 1, fotoSeleccionada = false;
+let imgOriginal = null, baseW = 0, baseH = 0;
+let escala = 1.0, offsetX = 0, offsetY = 0;
+let mascaras = [], mascaraIdx = -1;
+let imgMascara = null, mascaraCargada = false;
+let blancoYNegro = false;
+
+const ajustes = {
+    brillo: 0, contraste: 0, saturacion: 0, viveza: 0,
+    tono: 0, enfoque: 0, claridad: 0, textura: 0
+};
+
+const sliders = [
+    { id: "slBrillo", valId: "valBrillo", key: "brillo", suffix: "" },
+    { id: "slContraste", valId: "valContraste", key: "contraste", suffix: "" },
+    { id: "slSaturacion", valId: "valSaturacion", key: "saturacion", suffix: "" },
+    { id: "slViveza", valId: "valViveza", key: "viveza", suffix: "" },
+    { id: "slTono", valId: "valTono", key: "tono", suffix: "°" },
+    { id: "slEnfoque", valId: "valEnfoque", key: "enfoque", suffix: "" },
+    { id: "slClaridad", valId: "valClaridad", key: "claridad", suffix: "" },
+    { id: "slTextura", valId: "valTextura", key: "textura", suffix: "" },
+];
+
+sliders.forEach(s => {
+    const el = document.getElementById(s.id);
+    const val = document.getElementById(s.valId);
+    el.addEventListener("input", () => {
+        ajustes[s.key] = parseInt(el.value);
+        val.textContent = el.value + s.suffix;
+        redibujar();
+    });
+});
+
+toggleBN.addEventListener("click", () => {
+    blancoYNegro = !blancoYNegro;
+    toggleBN.classList.toggle("on", blancoYNegro);
+    redibujar();
+});
+
+btnResetAjustes.addEventListener("click", () => {
+    sliders.forEach(s => {
+        ajustes[s.key] = 0;
+        const el = document.getElementById(s.id);
+        el.value = 0;
+        document.getElementById(s.valId).textContent = "0" + s.suffix;
+    });
+    blancoYNegro = false;
+    toggleBN.classList.remove("on");
+    redibujar();
+});
+
+// --- Panel toggles ---
+function setupToggle(btn, panel) {
+    btn.addEventListener("click", () => {
+        btn.classList.toggle("abierto");
+        panel.classList.toggle("abierto");
+    });
+}
+setupToggle(fotoToggle, fotoPanel);
+setupToggle(ajustesToggle, ajustesPanel);
+
+// --- Masks ---
+async function cargarMascaras() {
+    try {
+        const r = await fetch("/mascaras");
+        mascaras = await r.json();
+    } catch { mascaras = []; }
+    renderMascaras();
+    if (mascaras.length > 0) seleccionarMascara(0);
+}
+
+function renderMascaras() {
+    seccionMascaras.style.display = "";
+    mascarasScroll.innerHTML = "";
+    mascaras.forEach((m, i) => {
+        const item = document.createElement("div");
+        item.className = "mascara-item" + (i === mascaraIdx ? " activa" : "");
+        const img = document.createElement("img");
+        img.src = "/static/" + m.archivo;
+        img.alt = m.nombre;
+        item.appendChild(img);
+        const label = document.createElement("div");
+        label.className = "mascara-label";
+        label.textContent = m.nombre;
+        item.appendChild(label);
+        const del = document.createElement("button");
+        del.className = "mascara-delete";
+        del.textContent = "×";
+        del.addEventListener("click", (e) => { e.stopPropagation(); eliminarMascara(i); });
+        item.appendChild(del);
+        item.addEventListener("click", () => seleccionarMascara(i));
+        mascarasScroll.appendChild(item);
+    });
+    const add = document.createElement("div");
+    add.className = "mascara-add";
+    add.textContent = "+";
+    add.addEventListener("click", () => inputMascara.click());
+    mascarasScroll.appendChild(add);
+}
+
+function seleccionarMascara(idx) {
+    mascaraIdx = idx;
+    mascaraCargada = false;
+    document.querySelectorAll(".mascara-item").forEach((el, i) => el.classList.toggle("activa", i === idx));
+    if (idx < 0 || idx >= mascaras.length) { imgMascara = null; redibujar(); return; }
+    imgMascara = new Image();
+    imgMascara.onload = () => { mascaraCargada = true; redibujar(); };
+    imgMascara.src = "/static/" + mascaras[idx].archivo;
+}
+
+inputMascara.addEventListener("change", async function () {
+    const archivo = this.files[0];
+    if (!archivo) return;
+    const fd = new FormData();
+    fd.append("archivo", archivo);
+    try {
+        const r = await fetch("/subir-mascara", { method: "POST", body: fd });
+        const d = await r.json();
+        if (d.ok) {
+            mascaras.push(d.mascara);
+            renderMascaras();
+            seleccionarMascara(mascaras.length - 1);
+            setEstado("Plantilla subida", "ok");
+        } else { setEstado(d.error, "error"); }
+    } catch { setEstado("Error al subir plantilla", "error"); }
+    this.value = "";
+});
+
+async function eliminarMascara(idx) {
+    const m = mascaras[idx];
+    try {
+        const r = await fetch("/eliminar-mascara", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ archivo: m.archivo }),
+        });
+        const d = await r.json();
+        if (d.ok) {
+            mascaras.splice(idx, 1);
+            if (mascaraIdx === idx) mascaraIdx = mascaras.length > 0 ? 0 : -1;
+            else if (mascaraIdx > idx) mascaraIdx--;
+            renderMascaras();
+            if (mascaraIdx >= 0) seleccionarMascara(mascaraIdx);
+            else { imgMascara = null; mascaraCargada = false; redibujar(); }
+        }
+    } catch {}
+}
+cargarMascaras();
+
+// --- Printers ---
+async function cargarImpresoras() {
+    try {
+        const r = await fetch("/impresoras");
+        const d = await r.json();
+        selectImpresora.innerHTML = "";
+        if (d.impresoras.length === 0) {
+            selectImpresora.innerHTML = '<option value="">Sin impresoras detectadas</option>';
+            return;
+        }
+        d.impresoras.forEach(p => {
+            const opt = document.createElement("option");
+            opt.value = p; opt.textContent = p;
+            if (p === d.predeterminada) { opt.textContent += " (predeterminada)"; opt.selected = true; }
+            selectImpresora.appendChild(opt);
+        });
+    } catch { selectImpresora.innerHTML = '<option value="">Error al cargar</option>'; }
+}
+cargarImpresoras();
+
+// --- Color profiles ---
+async function cargarPerfiles() {
+    try {
+        const r = await fetch("/perfiles");
+        const perfiles = await r.json();
+        selectPerfil.innerHTML = "";
+        perfiles.forEach(p => {
+            const opt = document.createElement("option");
+            opt.value = p.archivo; opt.textContent = p.nombre;
+            selectPerfil.appendChild(opt);
+        });
+    } catch { selectPerfil.innerHTML = '<option value="">Error al cargar</option>'; }
+}
+cargarPerfiles();
+
+btnSubirPerfil.addEventListener("click", () => inputPerfil.click());
+inputPerfil.addEventListener("change", async function () {
+    const archivo = this.files[0];
+    if (!archivo) return;
+    const fd = new FormData();
+    fd.append("archivo", archivo);
+    try {
+        const r = await fetch("/subir-perfil", { method: "POST", body: fd });
+        const d = await r.json();
+        if (d.ok) {
+            await cargarPerfiles();
+            selectPerfil.value = d.perfil.archivo;
+            setEstado("Perfil ICC subido", "ok");
+        } else { setEstado(d.error, "error"); }
+    } catch { setEstado("Error al subir perfil", "error"); }
+    this.value = "";
+});
+
+// --- Canvas drawing with filters ---
+const offscreen = document.createElement("canvas");
+offscreen.width = CW; offscreen.height = CH;
+const octx = offscreen.getContext("2d");
+
+function calcularBase(img) {
+    const r = CW / CH, ri = img.width / img.height;
+    if (ri > r) { baseH = CH; baseW = CH * ri; }
+    else { baseW = CW; baseH = CW / ri; }
+}
+function clampOffset() {
+    const w = baseW * escala, h = baseH * escala;
+    const mx = Math.max(0, (w - CW) / 2), my = Math.max(0, (h - CH) / 2);
+    offsetX = Math.max(-mx, Math.min(mx, offsetX));
+    offsetY = Math.max(-my, Math.min(my, offsetY));
+}
+
+function buildFilterString() {
+    const parts = [];
+    const br = 100 + ajustes.brillo;
+    if (br !== 100) parts.push(`brightness(${br}%)`);
+    const co = 100 + ajustes.contraste;
+    if (co !== 100) parts.push(`contrast(${co}%)`);
+    let sat = 100 + ajustes.saturacion;
+    if (blancoYNegro) sat = 0;
+    if (sat !== 100) parts.push(`saturate(${sat}%)`);
+    if (ajustes.tono !== 0) parts.push(`hue-rotate(${ajustes.tono}deg)`);
+    return parts.length > 0 ? parts.join(" ") : "none";
+}
+
+function redibujar() {
+    ctx.clearRect(0, 0, CW, CH);
+    if (!imgOriginal) return;
+
+    const w = baseW * escala, h = baseH * escala;
+    const dx = (CW - w) / 2 + offsetX, dy = (CH - h) / 2 + offsetY;
+
+    // Draw photo with CSS filters onto offscreen canvas
+    octx.clearRect(0, 0, CW, CH);
+    octx.filter = buildFilterString();
+    octx.drawImage(imgOriginal, dx, dy, w, h);
+    octx.filter = "none";
+
+    // Apply viveza (selective saturation boost on less-saturated pixels)
+    if (ajustes.viveza !== 0 && !blancoYNegro) {
+        const imgData = octx.getImageData(0, 0, CW, CH);
+        const d = imgData.data;
+        const v = ajustes.viveza / 100;
+        for (let i = 0; i < d.length; i += 4) {
+            const r = d[i], g = d[i+1], b = d[i+2];
+            const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+            const sat = mx === 0 ? 0 : (mx - mn) / mx;
+            const boost = v * (1 - sat);
+            const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+            d[i]   = Math.max(0, Math.min(255, gray + (r - gray) * (1 + boost)));
+            d[i+1] = Math.max(0, Math.min(255, gray + (g - gray) * (1 + boost)));
+            d[i+2] = Math.max(0, Math.min(255, gray + (b - gray) * (1 + boost)));
+        }
+        octx.putImageData(imgData, 0, 0);
+    }
+
+    // Apply enfoque/claridad/textura via unsharp mask
+    const sharpTotal = ajustes.enfoque + ajustes.claridad * 0.7 + ajustes.textura * 0.4;
+    if (sharpTotal > 0) {
+        const radius = 0.6 + (ajustes.claridad * 0.02) + (ajustes.textura * 0.005);
+        const amount = sharpTotal / 100;
+        // Simple unsharp mask: blur a copy, then blend (original - blurred) * amount
+        const blur = document.createElement("canvas");
+        blur.width = CW; blur.height = CH;
+        const bctx = blur.getContext("2d");
+        bctx.filter = `blur(${radius}px)`;
+        bctx.drawImage(offscreen, 0, 0);
+        bctx.filter = "none";
+
+        const orig = octx.getImageData(0, 0, CW, CH);
+        const blurred = bctx.getImageData(0, 0, CW, CH);
+        const od = orig.data, bd = blurred.data;
+        for (let i = 0; i < od.length; i += 4) {
+            od[i]   = Math.max(0, Math.min(255, od[i]   + (od[i]   - bd[i])   * amount));
+            od[i+1] = Math.max(0, Math.min(255, od[i+1] + (od[i+1] - bd[i+1]) * amount));
+            od[i+2] = Math.max(0, Math.min(255, od[i+2] + (od[i+2] - bd[i+2]) * amount));
+        }
+        octx.putImageData(orig, 0, 0);
+    }
+
+    // Draw filtered photo to main canvas
+    ctx.drawImage(offscreen, 0, 0);
+
+    // Draw mask ON TOP (unaffected by filters)
+    if (mascaraCargada && imgMascara) ctx.drawImage(imgMascara, 0, 0, CW, CH);
+}
+
+function resetTransform() { escala = 1; offsetX = offsetY = 0; redibujar(); }
+
+function s2c(cx, cy) {
+    const r = canvas.getBoundingClientRect();
+    return { x: (cx - r.left) * (CW / r.width), y: (cy - r.top) * (CH / r.height) };
+}
+
+// --- File input ---
+btnFoto.addEventListener("click", () => inputFoto.click());
+inputFoto.addEventListener("change", function () {
+    const f = this.files[0]; if (!f) return;
+    const rd = new FileReader();
+    rd.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+            imgOriginal = img; calcularBase(img); resetTransform();
+            fotoSeleccionada = true; btnImprimir.disabled = false; btnReset.disabled = false;
+            placeholder.style.display = "none";
+            hint.classList.add("visible");
+            setTimeout(() => hint.classList.remove("visible"), 3000);
+            setEstado("");
+        };
+        img.src = e.target.result;
+    };
+    rd.readAsDataURL(f);
+});
+btnReset.addEventListener("click", () => {
+    if (!imgOriginal) return;
+    resetTransform();
+    // Also reset adjustments
+    btnResetAjustes.click();
+});
+
+// --- TOUCH ---
+let isDrag = false, isPin = false;
+let dsx, dsy, osx, osy, psd, pss, pmx, pmy;
+
+canvasWrap.addEventListener("touchstart", (e) => {
+    if (!imgOriginal) return; e.preventDefault();
+    if (e.touches.length === 1) {
+        isDrag = true; isPin = false;
+        dsx = e.touches[0].clientX; dsy = e.touches[0].clientY;
+        osx = offsetX; osy = offsetY;
+    } else if (e.touches.length === 2) {
+        isDrag = false; isPin = true;
+        psd = dist(e.touches[0], e.touches[1]); pss = escala;
+        pmx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        pmy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    }
+}, { passive: false });
+
+canvasWrap.addEventListener("touchmove", (e) => {
+    if (!imgOriginal) return; e.preventDefault();
+    const f = CW / canvas.getBoundingClientRect().width;
+    if (e.touches.length === 1 && isDrag) {
+        offsetX = osx + (e.touches[0].clientX - dsx) * f;
+        offsetY = osy + (e.touches[0].clientY - dsy) * f;
+        clampOffset(); redibujar();
+    } else if (e.touches.length === 2 && isPin) {
+        const t0 = e.touches[0], t1 = e.touches[1];
+        const d = dist(t0, t1);
+        const ne = Math.max(ESCALA_MIN, Math.min(ESCALA_MAX, pss * (d / psd)));
+        const mx = (t0.clientX + t1.clientX) / 2, my = (t0.clientY + t1.clientY) / 2;
+        const cp = s2c(mx, my);
+        const wo = baseW * escala, ho = baseH * escala;
+        const rx = cp.x - ((CW - wo) / 2 + offsetX), ry = cp.y - ((CH - ho) / 2 + offsetY);
+        escala = ne;
+        const wn = baseW * escala, hn = baseH * escala;
+        offsetX = cp.x - rx * (wn / wo) - (CW - wn) / 2;
+        offsetY = cp.y - ry * (hn / ho) - (CH - hn) / 2;
+        offsetX += (mx - pmx) * f; offsetY += (my - pmy) * f;
+        pmx = mx; pmy = my; psd = d; pss = escala;
+        clampOffset(); redibujar();
+    }
+}, { passive: false });
+
+canvasWrap.addEventListener("touchend", (e) => {
+    if (e.touches.length === 0) { isDrag = isPin = false; }
+    else if (e.touches.length === 1 && isPin) {
+        isPin = false; isDrag = true;
+        dsx = e.touches[0].clientX; dsy = e.touches[0].clientY;
+        osx = offsetX; osy = offsetY;
+    }
+});
+
+// --- MOUSE ---
+let mdn = false;
+canvasWrap.addEventListener("mousedown", (e) => {
+    if (!imgOriginal) return; mdn = true;
+    dsx = e.clientX; dsy = e.clientY; osx = offsetX; osy = offsetY; e.preventDefault();
+});
+window.addEventListener("mousemove", (e) => {
+    if (!mdn || !imgOriginal) return;
+    const f = CW / canvas.getBoundingClientRect().width;
+    offsetX = osx + (e.clientX - dsx) * f; offsetY = osy + (e.clientY - dsy) * f;
+    clampOffset(); redibujar();
+});
+window.addEventListener("mouseup", () => { mdn = false; });
+canvasWrap.addEventListener("wheel", (e) => {
+    if (!imgOriginal) return; e.preventDefault();
+    const cp = s2c(e.clientX, e.clientY);
+    const ne = Math.max(ESCALA_MIN, Math.min(ESCALA_MAX, escala * (e.deltaY > 0 ? 0.9 : 1.1)));
+    const wo = baseW * escala, ho = baseH * escala;
+    const rx = cp.x - ((CW - wo) / 2 + offsetX), ry = cp.y - ((CH - ho) / 2 + offsetY);
+    escala = ne;
+    const wn = baseW * escala, hn = baseH * escala;
+    offsetX = cp.x - rx * (wn / wo) - (CW - wn) / 2;
+    offsetY = cp.y - ry * (hn / ho) - (CH - hn) / 2;
+    clampOffset(); redibujar();
+}, { passive: false });
+
+function dist(a, b) { const dx = a.clientX - b.clientX, dy = a.clientY - b.clientY; return Math.sqrt(dx*dx+dy*dy); }
+
+// --- Copies (unlimited) ---
+btnMenos.addEventListener("click", () => { if (copias > 1) { copias--; numCopias.textContent = copias; } });
+btnMas.addEventListener("click", () => { copias++; numCopias.textContent = copias; });
+
+// --- Print ---
+btnImprimir.addEventListener("click", async () => {
+    if (!fotoSeleccionada) return;
+    overlay.classList.add("visible"); btnImprimir.disabled = true; setEstado("");
+    const imagenB64 = canvas.toDataURL("image/png");
+    try {
+        const r = await fetch("/imprimir", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                imagen: imagenB64,
+                copias,
+                impresora: selectImpresora.value,
+                perfil: selectPerfil.value,
+            }),
+        });
+        const d = await r.json();
+        if (r.ok && d.ok) setEstado(d.mensaje, "ok");
+        else setEstado(d.error || "Error desconocido", "error");
+    } catch { setEstado("Error de conexión con el servidor", "error"); }
+    finally { overlay.classList.remove("visible"); btnImprimir.disabled = false; }
+});
+
+function setEstado(msg, tipo) {
+    estado.textContent = msg;
+    estado.className = "estado" + (tipo ? " " + tipo : "");
+}
+</script>
+</body>
+</html>
