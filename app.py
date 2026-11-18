@@ -1,25 +1,195 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_from_directory
 import base64
 import tempfile
 import subprocess
 import os
 import glob
 import re
+import uuid
+import json
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB max upload
+app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100 MB max upload
 
 CARPETA_MASCARAS = os.path.join(app.static_folder, "mascaras")
 CARPETA_PERFILES = os.path.join(app.static_folder, "perfiles")
+CARPETA_GALERIA = os.path.join(app.static_folder, "galeria")
 
 os.makedirs(CARPETA_MASCARAS, exist_ok=True)
 os.makedirs(CARPETA_PERFILES, exist_ok=True)
+os.makedirs(CARPETA_GALERIA, exist_ok=True)
+
+EXTENSIONES_IMAGEN = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
+EXTENSIONES_PSD = {".psd", ".psb"}
+EXTENSIONES_RAW = {
+    ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf", ".dng",
+    ".srw", ".pef", ".mrw", ".3fr", ".rwl", ".raw",
+}
+TODAS_EXTENSIONES = EXTENSIONES_IMAGEN | EXTENSIONES_PSD | EXTENSIONES_RAW
+
+
+def convertir_a_jpg(ruta_origen, ruta_destino):
+    """Convierte cualquier imagen/PSD/RAW a JPG usando ImageMagick/dcraw."""
+    ext = os.path.splitext(ruta_origen)[1].lower()
+
+    if ext in EXTENSIONES_RAW:
+        # Intentar dcraw primero, luego ImageMagick como fallback
+        ruta_ppm = ruta_origen + ".ppm"
+        result = subprocess.run(
+            ["dcraw", "-c", "-w", "-h", ruta_origen],
+            capture_output=True, timeout=120,
+        )
+        if result.returncode == 0 and result.stdout:
+            with open(ruta_ppm, "wb") as f:
+                f.write(result.stdout)
+            conv = subprocess.run(
+                ["convert", ruta_ppm, "-quality", "95", ruta_destino],
+                capture_output=True, text=True, timeout=60,
+            )
+            try:
+                os.unlink(ruta_ppm)
+            except OSError:
+                pass
+            if conv.returncode == 0:
+                return True
+
+        # Fallback: ImageMagick directo (funciona con algunos RAW si tiene delegates)
+        conv = subprocess.run(
+            ["convert", ruta_origen + "[0]", "-quality", "95", ruta_destino],
+            capture_output=True, text=True, timeout=120,
+        )
+        return conv.returncode == 0
+
+    # PSD o imagen normal: ImageMagick [0] para aplanar capas PSD
+    conv = subprocess.run(
+        ["convert", ruta_origen + "[0]", "-quality", "95", ruta_destino],
+        capture_output=True, text=True, timeout=120,
+    )
+    return conv.returncode == 0
 
 
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+# --- Galería ---
+
+@app.route("/galeria")
+def listar_galeria():
+    fotos = []
+    for nombre in sorted(os.listdir(CARPETA_GALERIA)):
+        ruta = os.path.join(CARPETA_GALERIA, nombre)
+        if not os.path.isfile(ruta):
+            continue
+        base, ext = os.path.splitext(nombre)
+        if ext.lower() not in (".jpg", ".jpeg", ".png"):
+            continue
+        # Buscar metadatos
+        meta_path = ruta + ".meta.json"
+        nombre_original = base
+        if os.path.isfile(meta_path):
+            try:
+                with open(meta_path) as f:
+                    meta = json.load(f)
+                nombre_original = meta.get("nombre_original", base)
+            except Exception:
+                pass
+        fotos.append({
+            "archivo": nombre,
+            "nombre": nombre_original,
+            "url": f"/static/galeria/{nombre}",
+        })
+    return jsonify(fotos)
+
+
+@app.route("/subir-galeria", methods=["POST"])
+def subir_galeria():
+    if "archivos" not in request.files:
+        return jsonify({"error": "No se enviaron archivos"}), 400
+
+    archivos = request.files.getlist("archivos")
+    subidos = []
+    errores = []
+
+    for archivo in archivos:
+        if not archivo.filename:
+            continue
+        nombre_orig = archivo.filename
+        nombre_seg = secure_filename(nombre_orig)
+        ext = os.path.splitext(nombre_seg)[1].lower()
+
+        if ext not in TODAS_EXTENSIONES:
+            errores.append(f"{nombre_orig}: formato no soportado")
+            continue
+
+        # Guardar archivo temporal
+        uid = uuid.uuid4().hex[:8]
+        ruta_tmp = os.path.join(CARPETA_GALERIA, f"tmp_{uid}{ext}")
+        archivo.save(ruta_tmp)
+
+        # Si ya es JPG/PNG estándar, guardar directamente
+        if ext in (".jpg", ".jpeg", ".png"):
+            nombre_final = f"{uid}_{nombre_seg}"
+            ruta_final = os.path.join(CARPETA_GALERIA, nombre_final)
+            os.rename(ruta_tmp, ruta_final)
+        else:
+            # Convertir a JPG
+            nombre_base = os.path.splitext(nombre_seg)[0]
+            nombre_final = f"{uid}_{nombre_base}.jpg"
+            ruta_final = os.path.join(CARPETA_GALERIA, nombre_final)
+
+            if not convertir_a_jpg(ruta_tmp, ruta_final):
+                errores.append(f"{nombre_orig}: error al convertir")
+                try:
+                    os.unlink(ruta_tmp)
+                except OSError:
+                    pass
+                continue
+
+            try:
+                os.unlink(ruta_tmp)
+            except OSError:
+                pass
+
+        # Guardar metadatos
+        meta_path = ruta_final + ".meta.json"
+        with open(meta_path, "w") as f:
+            json.dump({
+                "nombre_original": os.path.splitext(nombre_orig)[0],
+                "formato_original": ext,
+            }, f)
+
+        nombre_display = os.path.splitext(nombre_orig)[0]
+        subidos.append({
+            "archivo": nombre_final,
+            "nombre": nombre_display,
+            "url": f"/static/galeria/{nombre_final}",
+        })
+
+    return jsonify({"ok": True, "subidos": subidos, "errores": errores})
+
+
+@app.route("/eliminar-galeria", methods=["POST"])
+def eliminar_galeria():
+    datos = request.get_json()
+    if not datos or "archivo" not in datos:
+        return jsonify({"error": "No se indicó archivo"}), 400
+
+    nombre = os.path.basename(datos["archivo"])
+    ruta = os.path.join(CARPETA_GALERIA, nombre)
+
+    if not os.path.isfile(ruta):
+        return jsonify({"error": "Archivo no encontrado"}), 404
+
+    os.remove(ruta)
+    # Eliminar metadatos si existen
+    meta_path = ruta + ".meta.json"
+    if os.path.isfile(meta_path):
+        os.remove(meta_path)
+
+    return jsonify({"ok": True})
 
 
 # --- Máscaras ---
@@ -95,11 +265,9 @@ def listar_impresoras():
     predeterminada = None
 
     for linea in lineas:
-        # "printer DNP_DS620 is idle." or "printer DNP_DS620 disabled since..."
         m = re.match(r"printer\s+(\S+)\s+", linea)
         if m:
             impresoras.append(m.group(1))
-        # "system default destination: DNP_DS620"
         m2 = re.match(r"system default destination:\s+(\S+)", linea)
         if m2:
             predeterminada = m2.group(1)
@@ -111,7 +279,6 @@ def listar_impresoras():
 
 @app.route("/perfiles")
 def listar_perfiles():
-    # Perfiles ICC encontrados en la carpeta de perfiles
     perfiles = [{"archivo": "", "nombre": "Sin perfil (por defecto)"}]
 
     archivos = sorted(glob.glob(os.path.join(CARPETA_PERFILES, "*.ic[cm]")))
@@ -167,7 +334,6 @@ def imprimir():
     except Exception:
         return jsonify({"error": "Imagen en formato inválido"}), 400
 
-    # Si hay perfil ICC, aplicar con convert de ImageMagick
     ruta_imagen = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:

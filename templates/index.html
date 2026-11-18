@@ -282,6 +282,60 @@
             font-weight: 500 !important; background-image: none !important;
         }
 
+        /* --- Gallery --- */
+        .galeria-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+            gap: 8px; margin-top: 6px;
+        }
+        .galeria-item {
+            position: relative; aspect-ratio: 3/2;
+            border-radius: var(--radio-sm); overflow: hidden;
+            cursor: pointer; background: var(--azul-suave);
+            border: 2px solid transparent;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .galeria-item:hover, .galeria-item:active {
+            border-color: var(--arena);
+            box-shadow: 0 0 0 2px rgba(201,169,110,0.25);
+        }
+        .galeria-item img {
+            width: 100%; height: 100%; object-fit: cover;
+        }
+        .galeria-item-name {
+            position: absolute; bottom: 0; left: 0; right: 0;
+            background: rgba(30,61,92,0.75); color: white;
+            font-size: 0.48rem; text-align: center; padding: 2px 4px;
+            overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+        }
+        .galeria-item-delete {
+            position: absolute; top: 3px; right: 3px; width: 18px; height: 18px;
+            border-radius: 50%; background: rgba(192,57,43,0.85); color: white;
+            font-size: 0.6rem; border: none; cursor: pointer;
+            display: none; align-items: center; justify-content: center;
+            line-height: 1;
+        }
+        .galeria-item:hover .galeria-item-delete,
+        .galeria-item:active .galeria-item-delete { display: flex; }
+        .galeria-upload-area {
+            display: flex; gap: 8px; margin-top: 8px;
+        }
+        .btn-galeria-upload {
+            flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+            padding: 10px; border: 2px dashed var(--borde); border-radius: var(--radio-sm);
+            background: transparent; color: var(--texto-suave); font-family: inherit;
+            font-size: 0.72rem; cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .btn-galeria-upload:hover { border-color: var(--arena); color: var(--arena); }
+        .galeria-vacia {
+            text-align: center; padding: 16px; color: var(--texto-suave);
+            font-size: 0.72rem;
+        }
+        .galeria-progreso {
+            font-size: 0.68rem; color: var(--arena); text-align: center;
+            padding: 6px 0;
+        }
+
         /* --- Overlay --- */
         .overlay-cargando {
             display: none; position: fixed; inset: 0;
@@ -329,6 +383,26 @@
     <div class="mascaras-scroll" id="mascarasScroll"></div>
 </div>
 <input type="file" id="inputMascara" accept=".png">
+
+<!-- Galería -->
+<button class="panel-toggle" id="galeriaToggle">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+    Galería de fotos
+</button>
+<div class="panel-collapsible" id="galeriaPanel">
+    <div class="panel-body">
+        <div id="galeriaGrid" class="galeria-grid"></div>
+        <div id="galeriaVacia" class="galeria-vacia">No hay fotos en la galería</div>
+        <div id="galeriaProgreso" class="galeria-progreso" style="display:none;"></div>
+        <div class="galeria-upload-area">
+            <button class="btn-galeria-upload" id="btnGaleriaUpload">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Importar archivos (JPG, PNG, PSD, RAW…)
+            </button>
+        </div>
+    </div>
+</div>
+<input type="file" id="inputGaleria" accept=".jpg,.jpeg,.png,.tif,.tiff,.bmp,.webp,.psd,.psb,.cr2,.cr3,.nef,.arw,.orf,.rw2,.raf,.dng,.srw,.pef,.mrw,.3fr,.rwl,.raw" multiple>
 
 <!-- Ajustes de foto -->
 <button class="panel-toggle" id="fotoToggle">
@@ -462,6 +536,13 @@ const fotoToggle = document.getElementById("fotoToggle");
 const fotoPanel = document.getElementById("fotoPanel");
 const toggleBN = document.getElementById("toggleBN");
 const btnResetAjustes = document.getElementById("btnResetAjustes");
+const galeriaToggle = document.getElementById("galeriaToggle");
+const galeriaPanel = document.getElementById("galeriaPanel");
+const galeriaGrid = document.getElementById("galeriaGrid");
+const galeriaVacia = document.getElementById("galeriaVacia");
+const galeriaProgreso = document.getElementById("galeriaProgreso");
+const btnGaleriaUpload = document.getElementById("btnGaleriaUpload");
+const inputGaleria = document.getElementById("inputGaleria");
 
 const CW = 1800, CH = 1200;
 const ESCALA_MIN = 1.0, ESCALA_MAX = 5.0;
@@ -526,6 +607,7 @@ function setupToggle(btn, panel) {
 }
 setupToggle(fotoToggle, fotoPanel);
 setupToggle(ajustesToggle, ajustesPanel);
+setupToggle(galeriaToggle, galeriaPanel);
 
 // --- Masks ---
 async function cargarMascaras() {
@@ -904,6 +986,110 @@ function setEstado(msg, tipo) {
     estado.textContent = msg;
     estado.className = "estado" + (tipo ? " " + tipo : "");
 }
+
+// --- Gallery ---
+let galeriaFotos = [];
+
+async function cargarGaleria() {
+    try {
+        const r = await fetch("/galeria");
+        galeriaFotos = await r.json();
+    } catch { galeriaFotos = []; }
+    renderGaleria();
+}
+
+function renderGaleria() {
+    galeriaGrid.innerHTML = "";
+    galeriaVacia.style.display = galeriaFotos.length === 0 ? "" : "none";
+    galeriaFotos.forEach((foto, i) => {
+        const item = document.createElement("div");
+        item.className = "galeria-item";
+        const img = document.createElement("img");
+        img.src = foto.url;
+        img.alt = foto.nombre;
+        img.loading = "lazy";
+        item.appendChild(img);
+        const name = document.createElement("div");
+        name.className = "galeria-item-name";
+        name.textContent = foto.nombre;
+        item.appendChild(name);
+        const del = document.createElement("button");
+        del.className = "galeria-item-delete";
+        del.textContent = "×";
+        del.addEventListener("click", (e) => { e.stopPropagation(); eliminarGaleria(i); });
+        item.appendChild(del);
+        item.addEventListener("click", () => cargarDesdeGaleria(foto));
+        galeriaGrid.appendChild(item);
+    });
+}
+
+function cargarDesdeGaleria(foto) {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+        imgOriginal = img; calcularBase(img); resetTransform();
+        fotoSeleccionada = true; btnImprimir.disabled = false; btnReset.disabled = false;
+        placeholder.style.display = "none";
+        hint.classList.add("visible");
+        setTimeout(() => hint.classList.remove("visible"), 3000);
+        setEstado("Foto cargada: " + foto.nombre, "ok");
+    };
+    img.onerror = () => setEstado("Error al cargar imagen de galería", "error");
+    img.src = foto.url;
+}
+
+async function eliminarGaleria(idx) {
+    const foto = galeriaFotos[idx];
+    try {
+        const r = await fetch("/eliminar-galeria", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ archivo: foto.archivo }),
+        });
+        const d = await r.json();
+        if (d.ok) {
+            galeriaFotos.splice(idx, 1);
+            renderGaleria();
+            setEstado("Foto eliminada", "ok");
+        } else { setEstado(d.error || "Error al eliminar", "error"); }
+    } catch { setEstado("Error de conexión", "error"); }
+}
+
+btnGaleriaUpload.addEventListener("click", () => inputGaleria.click());
+
+inputGaleria.addEventListener("change", async function () {
+    const archivos = this.files;
+    if (!archivos || archivos.length === 0) return;
+
+    galeriaProgreso.style.display = "";
+    galeriaProgreso.textContent = `Subiendo ${archivos.length} archivo(s)…`;
+
+    const fd = new FormData();
+    for (let i = 0; i < archivos.length; i++) {
+        fd.append("archivos", archivos[i]);
+    }
+
+    try {
+        const r = await fetch("/subir-galeria", { method: "POST", body: fd });
+        const d = await r.json();
+        if (d.ok) {
+            let msg = `${d.subidos.length} archivo(s) subido(s)`;
+            if (d.errores && d.errores.length > 0) {
+                msg += ` · ${d.errores.length} error(es): ${d.errores.join(", ")}`;
+            }
+            setEstado(msg, d.subidos.length > 0 ? "ok" : "error");
+            await cargarGaleria();
+        } else {
+            setEstado(d.error || "Error al subir", "error");
+        }
+    } catch {
+        setEstado("Error de conexión al subir", "error");
+    }
+    galeriaProgreso.style.display = "none";
+    this.value = "";
+});
+
+cargarGaleria();
 </script>
 </body>
 </html>
