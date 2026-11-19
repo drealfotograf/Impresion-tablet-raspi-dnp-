@@ -1090,6 +1090,27 @@ inputGaleria.addEventListener("change", async function () {
 });
 
 cargarGaleria();
+
+// --- Auto-refresh galería (detecta fotos nuevas por FTP) ---
+let galeriaVersionActual = 0;
+
+async function pollGaleriaVersion() {
+    try {
+        const r = await fetch("/galeria/version");
+        const d = await r.json();
+        if (d.version > galeriaVersionActual) {
+            galeriaVersionActual = d.version;
+            await cargarGaleria();
+            // Abrir panel de galería automáticamente si hay fotos nuevas
+            if (!galeriaPanel.classList.contains("abierto")) {
+                galeriaToggle.classList.add("abierto");
+                galeriaPanel.classList.add("abierto");
+            }
+        }
+    } catch {}
+}
+
+setInterval(pollGaleriaVersion, 4000);
 </script>
 </body>
 </html>

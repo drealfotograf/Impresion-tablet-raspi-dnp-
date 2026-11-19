@@ -1,6 +1,6 @@
 # Estado del Proyecto — Impresión Fotos Boda
 
-**Última actualización:** 2026-11-18
+**Última actualización:** 2026-11-19
 
 ## Descripción
 
@@ -14,12 +14,17 @@ https://github.com/drealfotograf/Impresion-tablet-raspi-dnp-
 
 | Archivo | Función |
 |---------|---------|
-| `app.py` | Backend Flask — endpoints API |
+| `app.py` | Backend Flask — endpoints API, watcher FTP |
 | `templates/index.html` | Frontend completo (HTML/CSS/JS) |
 | `requirements.txt` | Dependencia: `flask` |
 | `static/mascaras/*.png` | Plantillas de marcos (3 incluidas) |
 | `static/perfiles/` | Carpeta para perfiles ICC/ICM |
+| `static/galeria/` | Carpeta para fotos importadas (con metadatos .meta.json) |
+| `static/galeria/incoming/` | Carpeta donde el FTP deposita archivos de las cámaras |
+| `setup_ftp.sh` | Script para instalar y configurar vsftpd en la Pi |
+| `GUIA_CAMARAS_FTP.md` | Guía de configuración FTP para Canon 5D IV, R6 II, R5 II |
 | `.claude/launch.json` | Config del dev server (Flask en puerto 5000) |
+| `ESTADO_PROYECTO.md` | Este archivo — estado del proyecto |
 
 ## Funcionalidades implementadas
 
@@ -41,6 +46,32 @@ https://github.com/drealfotograf/Impresion-tablet-raspi-dnp-
 - Textura (0 a 100) — unsharp mask con radio fino
 - Blanco y negro (toggle on/off)
 - Botón "Restablecer ajustes"
+
+### Galería de fotos
+- Importar archivos desde móvil/tablet (multi-selección)
+- Formatos soportados: JPG, PNG, TIFF, BMP, WebP, PSD, PSB, RAW (CR2, CR3, NEF, ARW, ORF, RW2, RAF, DNG, SRW, PEF, MRW, 3FR, RWL)
+- Conversión automática de PSD/RAW a JPG usando ImageMagick y dcraw
+- Grid de miniaturas con nombre del archivo original
+- Tap en miniatura → carga como foto actual para editar e imprimir
+- Eliminar fotos de la galería
+- Panel colapsable
+- Metadatos almacenados en archivos .meta.json
+- Límite de upload: 100MB (para archivos RAW grandes)
+- API: `GET /galeria`, `GET /galeria/version`, `POST /subir-galeria`, `POST /eliminar-galeria`
+
+### Recepción directa desde cámaras Canon (FTP)
+- Cámaras soportadas: Canon 5D Mark IV, R6 Mark II, R5 Mark II
+- Servidor FTP (vsftpd) en la Raspberry Pi
+- Carpeta `static/galeria/incoming/` para recepción FTP
+- Hilo watcher que vigila la carpeta cada 3 segundos
+- Detección de archivo estable (espera a que termine la transferencia)
+- Conversión automática RAW → JPG al llegar
+- JPGs pasan directamente a la galería
+- Auto-refresh en frontend: polling cada 4 segundos vía `/galeria/version`
+- Panel de galería se abre automáticamente cuando llegan fotos nuevas
+- Script de setup: `setup_ftp.sh`
+- Guía de configuración: `GUIA_CAMARAS_FTP.md`
+- Soporta RAW y/o JPEG desde las cámaras
 
 ### Plantillas / Máscaras PNG
 - Carrusel horizontal con miniaturas
@@ -64,15 +95,25 @@ https://github.com/drealfotograf/Impresion-tablet-raspi-dnp-
 - Colores empresa: azul (#1e3d5c) y arena (#c9a96e)
 - Fuente: Inter (Google Fonts)
 - Responsive (mobile-first)
-- Paneles colapsables: "Ajustes de foto" y "Ajustes de impresión"
+- Paneles colapsables: "Galería de fotos", "Ajustes de foto" y "Ajustes de impresión"
 - Overlay con spinner al imprimir
 
 ## Stack técnico
 
-- **Backend:** Python + Flask
+- **Backend:** Python + Flask + threading (watcher FTP)
 - **Frontend:** HTML5 Canvas, CSS custom properties, JS vanilla
+- **Conversión:** ImageMagick (`convert`), dcraw (para RAW)
 - **Impresión:** CUPS (`lp`), ImageMagick (`convert`)
+- **FTP:** vsftpd (recepción desde cámaras Canon)
 - **Hardware destino:** Raspberry Pi 3B+ + DNP DS620
+
+## Dependencias del sistema (Raspberry Pi)
+
+- Python 3 + Flask
+- ImageMagick (para conversión PSD/TIFF/RAW y perfiles ICC)
+- dcraw (para archivos RAW: CR2, NEF, ARW, etc.)
+- CUPS (para impresión)
+- vsftpd (para recepción FTP desde cámaras)
 
 ## Pendiente / Ideas futuras
 
