@@ -336,6 +336,40 @@
             padding: 6px 0;
         }
 
+        .btn-buscar-impresoras {
+            width: 100%; padding: 8px; border: 1.5px dashed var(--borde);
+            border-radius: var(--radio-sm); background: transparent;
+            color: var(--texto-suave); font-family: inherit; font-size: 0.72rem;
+            cursor: pointer; transition: border-color 0.2s;
+        }
+        .btn-buscar-impresoras:hover { border-color: var(--arena); color: var(--arena); }
+        .impresora-estado {
+            display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+            margin-right: 4px; vertical-align: middle;
+        }
+        .impresora-estado.disponible { background: #3a9a5c; }
+        .impresora-estado.imprimiendo { background: var(--arena); }
+        .impresora-estado.offline { background: var(--peligro); }
+        .impresora-estado.desconocido { background: var(--texto-suave); }
+        .busqueda-item {
+            display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+            border: 1px solid var(--borde); border-radius: var(--radio-sm);
+            margin-bottom: 4px; font-size: 0.68rem; background: var(--blanco);
+        }
+        .busqueda-item button {
+            margin-left: auto; padding: 4px 10px; border: 1px solid var(--arena);
+            border-radius: var(--radio-sm); background: transparent;
+            color: var(--arena); font-family: inherit; font-size: 0.65rem;
+            cursor: pointer;
+        }
+        .cola-banner {
+            width: 100%; max-width: 420px; margin-top: 8px; padding: 8px 12px;
+            background: var(--arena-claro); border-radius: var(--radio-sm);
+            font-size: 0.72rem; color: var(--azul); display: none;
+            text-align: center;
+        }
+        .cola-banner.visible { display: block; }
+
         /* --- Overlay --- */
         .overlay-cargando {
             display: none; position: fixed; inset: 0;
@@ -486,9 +520,16 @@
     <div class="panel-body">
         <div class="campo">
             <label class="campo-label">Impresora</label>
-            <select id="selectImpresora">
-                <option value="">Cargando…</option>
-            </select>
+            <div class="fila-perfil">
+                <select id="selectImpresora">
+                    <option value="">Cargando…</option>
+                </select>
+                <button class="btn-subir-perfil" id="btnRefreshImpresoras" title="Refrescar impresoras">↻</button>
+            </div>
+        </div>
+        <div class="campo">
+            <button class="btn-buscar-impresoras" id="btnBuscarImpresoras">Buscar nuevas impresoras en la red</button>
+            <div id="resultadoBusqueda" style="display:none;margin-top:6px;"></div>
         </div>
         <div class="campo">
             <label class="campo-label">Perfil de color (ICC)</label>
@@ -709,13 +750,50 @@ async function cargarImpresoras() {
         }
         d.impresoras.forEach(p => {
             const opt = document.createElement("option");
-            opt.value = p; opt.textContent = p;
-            if (p === d.predeterminada) { opt.textContent += " (predeterminada)"; opt.selected = true; }
+            opt.value = p.nombre;
+            const dot = {disponible:"\u{1F7E2}",imprimiendo:"\u{1F7E1}",offline:"\u{1F534}"}[p.estado] || "⚪";
+            opt.textContent = `${dot} ${p.nombre}`;
+            if (p.nombre === d.predeterminada) { opt.textContent += " (pred.)"; opt.selected = true; }
             selectImpresora.appendChild(opt);
         });
     } catch { selectImpresora.innerHTML = '<option value="">Error al cargar</option>'; }
 }
 cargarImpresoras();
+
+document.getElementById("btnRefreshImpresoras").addEventListener("click", cargarImpresoras);
+
+document.getElementById("btnBuscarImpresoras").addEventListener("click", async () => {
+    const div = document.getElementById("resultadoBusqueda");
+    div.style.display = "block";
+    div.innerHTML = "<em>Buscando impresoras…</em>";
+    try {
+        const r = await fetch("/impresoras/buscar");
+        const d = await r.json();
+        if (!d.encontradas.length) { div.innerHTML = "<em>No se encontraron nuevas impresoras.</em>"; return; }
+        div.innerHTML = "";
+        d.encontradas.forEach(imp => {
+            const item = document.createElement("div");
+            item.className = "busqueda-item";
+            item.innerHTML = `<span>${imp.tipo}: ${imp.uri}</span>`;
+            const btn = document.createElement("button");
+            btn.textContent = "Agregar";
+            btn.addEventListener("click", async () => {
+                const nombre = prompt("Nombre para esta impresora:", imp.uri.split("/").pop() || "nueva");
+                if (!nombre) return;
+                btn.disabled = true; btn.textContent = "…";
+                const res = await fetch("/impresoras/agregar", {
+                    method: "POST", headers: {"Content-Type":"application/json"},
+                    body: JSON.stringify({uri: imp.uri, nombre})
+                });
+                const j = await res.json();
+                btn.textContent = j.ok ? "✓ Añadida" : "Error";
+                if (j.ok) cargarImpresoras();
+            });
+            item.appendChild(btn);
+            div.appendChild(item);
+        });
+    } catch { div.innerHTML = "<em>Error al buscar.</em>"; }
+});
 
 // --- Color profiles ---
 async function cargarPerfiles() {

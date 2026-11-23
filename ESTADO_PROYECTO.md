@@ -1,6 +1,6 @@
 # Estado del Proyecto — Impresión Fotos Boda
 
-**Última actualización:** 2026-11-19
+**Última actualización:** 2026-11-23
 
 ## Descripción
 
@@ -24,6 +24,7 @@ https://github.com/drealfotograf/Impresion-tablet-raspi-dnp-
 | `setup_ftp.sh` | Script para instalar y configurar vsftpd en la Pi |
 | `GUIA_CAMARAS_FTP.md` | Guía de configuración FTP para Canon 5D IV, R6 II, R5 II |
 | `.claude/launch.json` | Config del dev server (Flask en puerto 5000) |
+| `static/cola/` | Carpeta para cola de impresión persistente (recuperación tras corte) |
 | `ESTADO_PROYECTO.md` | Este archivo — estado del proyecto |
 
 ## Funcionalidades implementadas
@@ -83,12 +84,28 @@ https://github.com/drealfotograf/Impresion-tablet-raspi-dnp-
 
 ### Impresión
 - Copias ilimitadas (selector - / +)
-- Selección de impresora (dropdown, cargado desde CUPS vía `lpstat`)
+- Selección de impresora (dropdown con estado: disponible/imprimiendo/offline)
+- Soporte multi-impresora: Canon Selphy CP1500, Fuji ASK, DNP DS620, etc.
+- Botón refrescar lista de impresoras
+- Descubrimiento de nuevas impresoras en la red (`lpinfo -v`)
+- Agregar impresoras encontradas (`lpadmin`)
 - Selección de perfil de color ICC/ICM
 - Subida de perfiles ICC personalizados
 - Impresión vía comando `lp` con `-o fit-to-page`
 - Aplicación de perfil ICC con ImageMagick `convert -profile`
-- API: `GET /impresoras`, `GET /perfiles`, `POST /subir-perfil`, `POST /imprimir`
+- API: `GET /impresoras`, `GET /perfiles`, `POST /subir-perfil`, `POST /imprimir`, `GET /impresoras/buscar`, `POST /impresoras/agregar`
+
+### Cola de impresión persistente (recuperación ante cortes de energía)
+- Cada trabajo se guarda en disco (`static/cola/`) antes de imprimir
+- Archivo PNG + metadatos JSON por trabajo
+- Estados: pendiente → imprimiendo → completado / error
+- Al reiniciar, `reanudar_cola()` reintenta trabajos incompletos automáticamente
+- Reintentar trabajos fallidos manualmente desde la API
+- API: `GET /cola`, `POST /cola/reintentar`, `POST /cola/limpiar`
+
+### Recuperación ante cortes de energía
+- **Impresión:** cola persistente en disco reanuda trabajos al reiniciar
+- **Recepción FTP:** watcher re-escanea `incoming/` al arrancar, `archivo_estable()` asegura transferencias completas
 
 ### Diseño
 - Estilo minimalista moderno

@@ -1,6 +1,5 @@
 from flask import Flask, render_template, request, jsonify, send_from_directory
 import base64
-import tempfile
 import subprocess
 import os
 import glob
@@ -18,11 +17,13 @@ CARPETA_MASCARAS = os.path.join(app.static_folder, "mascaras")
 CARPETA_PERFILES = os.path.join(app.static_folder, "perfiles")
 CARPETA_GALERIA = os.path.join(app.static_folder, "galeria")
 CARPETA_FTP = os.path.join(app.static_folder, "galeria", "incoming")
+CARPETA_COLA = os.path.join(app.static_folder, "cola")
 
 os.makedirs(CARPETA_MASCARAS, exist_ok=True)
 os.makedirs(CARPETA_PERFILES, exist_ok=True)
 os.makedirs(CARPETA_GALERIA, exist_ok=True)
 os.makedirs(CARPETA_FTP, exist_ok=True)
+os.makedirs(CARPETA_COLA, exist_ok=True)
 
 EXTENSIONES_IMAGEN = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 EXTENSIONES_PSD = {".psd", ".psb"}
@@ -164,6 +165,118 @@ def watcher_ftp():
         except Exception as e:
             print(f"[watcher] Error en bucle: {e}")
         time.sleep(3)
+
+
+def guardar_trabajo(imagen_bytes, copias, impresora, perfil):
+    job_id = uuid.uuid4().hex[:12]
+    ruta_img = os.path.join(CARPETA_COLA, f"{job_id}.png")
+    ruta_meta = os.path.join(CARPETA_COLA, f"{job_id}.json")
+    with open(ruta_img, "wb") as f:
+        f.write(imagen_bytes)
+    with open(ruta_meta, "w") as f:
+        json.dump({
+            "id": job_id, "copias": copias,
+            "impresora": impresora, "perfil": perfil,
+            "estado": "pendiente", "creado": time.time(), "intentos": 0,
+        }, f)
+    return job_id
+
+
+def ejecutar_trabajo(job_id):
+    ruta_img = os.path.join(CARPETA_COLA, f"{job_id}.png")
+    ruta_meta = os.path.join(CARPETA_COLA, f"{job_id}.json")
+    if not os.path.isfile(ruta_meta) or not os.path.isfile(ruta_img):
+        return False, "Trabajo no encontrado"
+
+    with open(ruta_meta) as f:
+        job = json.load(f)
+
+    job["estado"] = "imprimiendo"
+    job["intentos"] = job.get("intentos", 0) + 1
+    with open(ruta_meta, "w") as f:
+        json.dump(job, f)
+
+    ruta_imagen = ruta_img
+    ruta_perfil_tmp = None
+    try:
+        if job.get("perfil"):
+            ruta_perfil = os.path.join(CARPETA_PERFILES, secure_filename(job["perfil"]))
+            if os.path.isfile(ruta_perfil):
+                ruta_perfil_tmp = ruta_img + "_perfil.png"
+                conv = subprocess.run(
+                    ["convert", ruta_img, "-profile", ruta_perfil, ruta_perfil_tmp],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if conv.returncode == 0 and os.path.isfile(ruta_perfil_tmp):
+                    ruta_imagen = ruta_perfil_tmp
+
+        cmd = ["lp", "-n", str(job["copias"]), "-o", "fit-to-page"]
+        if job.get("impresora"):
+            cmd += ["-d", job["impresora"]]
+        cmd.append(ruta_imagen)
+
+        resultado = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if resultado.returncode == 0:
+            job["estado"] = "completado"
+            with open(ruta_meta, "w") as f:
+                json.dump(job, f)
+            limpiar_trabajo(job_id)
+            return True, f"Imprimiendo {job['copias']} copia(s)…"
+        else:
+            job["estado"] = "error"
+            job["error"] = resultado.stderr.strip()
+            with open(ruta_meta, "w") as f:
+                json.dump(job, f)
+            return False, resultado.stderr.strip()
+    except subprocess.TimeoutExpired:
+        job["estado"] = "error"
+        job["error"] = "Tiempo agotado"
+        with open(ruta_meta, "w") as f:
+            json.dump(job, f)
+        return False, "Tiempo agotado"
+    except Exception as e:
+        job["estado"] = "error"
+        job["error"] = str(e)
+        with open(ruta_meta, "w") as f:
+            json.dump(job, f)
+        return False, str(e)
+    finally:
+        if ruta_perfil_tmp and os.path.isfile(ruta_perfil_tmp):
+            try:
+                os.unlink(ruta_perfil_tmp)
+            except OSError:
+                pass
+
+
+def limpiar_trabajo(job_id):
+    for sufijo in (".png", ".json"):
+        ruta = os.path.join(CARPETA_COLA, f"{job_id}{sufijo}")
+        try:
+            if os.path.isfile(ruta):
+                os.unlink(ruta)
+        except OSError:
+            pass
+
+
+def reanudar_cola():
+    reanudados = 0
+    for nombre in os.listdir(CARPETA_COLA):
+        if not nombre.endswith(".json"):
+            continue
+        ruta = os.path.join(CARPETA_COLA, nombre)
+        try:
+            with open(ruta) as f:
+                job = json.load(f)
+            if job.get("estado") in ("pendiente", "imprimiendo"):
+                job_id = job["id"]
+                print(f"[cola] Reanudando trabajo: {job_id} ({job.get('intentos', 0)} intentos previos)")
+                ok, msg = ejecutar_trabajo(job_id)
+                print(f"[cola] {'OK' if ok else 'Error'}: {msg}")
+                reanudados += 1
+        except Exception as e:
+            print(f"[cola] Error leyendo {nombre}: {e}")
+    if reanudados:
+        print(f"[cola] {reanudados} trabajo(s) reanudado(s) tras reinicio")
 
 
 @app.route("/")
@@ -366,14 +479,113 @@ def listar_impresoras():
     predeterminada = None
 
     for linea in lineas:
-        m = re.match(r"printer\s+(\S+)\s+", linea)
+        m = re.match(r"printer\s+(\S+)\s+(.*)", linea)
         if m:
-            impresoras.append(m.group(1))
+            nombre = m.group(1)
+            info = m.group(2).strip()
+            estado = "desconocido"
+            if "idle" in info.lower():
+                estado = "disponible"
+            elif "printing" in info.lower():
+                estado = "imprimiendo"
+            elif "disabled" in info.lower() or "stopped" in info.lower():
+                estado = "offline"
+            impresoras.append({"nombre": nombre, "estado": estado, "info": info})
         m2 = re.match(r"system default destination:\s+(\S+)", linea)
         if m2:
             predeterminada = m2.group(1)
 
     return jsonify({"impresoras": impresoras, "predeterminada": predeterminada})
+
+
+@app.route("/impresoras/buscar")
+def buscar_impresoras():
+    encontradas = []
+    try:
+        resultado = subprocess.run(
+            ["lpinfo", "-v"], capture_output=True, text=True, timeout=10
+        )
+        for linea in resultado.stdout.strip().splitlines():
+            parts = linea.strip().split(None, 1)
+            if len(parts) == 2:
+                tipo, uri = parts
+                encontradas.append({"tipo": tipo, "uri": uri})
+    except Exception:
+        pass
+    return jsonify({"encontradas": encontradas})
+
+
+@app.route("/impresoras/agregar", methods=["POST"])
+def agregar_impresora():
+    datos = request.get_json()
+    uri = datos.get("uri", "").strip()
+    nombre = datos.get("nombre", "").strip()
+    if not uri or not nombre:
+        return jsonify({"error": "Faltan URI y nombre"}), 400
+    nombre = re.sub(r"[^a-zA-Z0-9_-]", "_", nombre)
+    try:
+        resultado = subprocess.run(
+            ["lpadmin", "-p", nombre, "-E", "-v", uri, "-m", "everywhere"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if resultado.returncode == 0:
+            return jsonify({"ok": True, "nombre": nombre})
+        return jsonify({"error": resultado.stderr.strip() or "Error al agregar"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/cola")
+def listar_cola():
+    trabajos = []
+    for nombre in sorted(os.listdir(CARPETA_COLA)):
+        if not nombre.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(CARPETA_COLA, nombre)) as f:
+                job = json.load(f)
+            trabajos.append({
+                "id": job.get("id"),
+                "estado": job.get("estado"),
+                "copias": job.get("copias"),
+                "impresora": job.get("impresora"),
+                "intentos": job.get("intentos", 0),
+                "error": job.get("error"),
+            })
+        except Exception:
+            pass
+    return jsonify(trabajos)
+
+
+@app.route("/cola/reintentar", methods=["POST"])
+def reintentar_trabajo():
+    datos = request.get_json()
+    job_id = datos.get("id", "").strip()
+    if not job_id:
+        return jsonify({"error": "Falta ID"}), 400
+    job_id = re.sub(r"[^a-f0-9]", "", job_id)
+    ok, msg = ejecutar_trabajo(job_id)
+    if ok:
+        return jsonify({"ok": True, "mensaje": msg})
+    return jsonify({"error": msg}), 500
+
+
+@app.route("/cola/limpiar", methods=["POST"])
+def limpiar_cola():
+    limpiados = 0
+    for nombre in os.listdir(CARPETA_COLA):
+        if not nombre.endswith(".json"):
+            continue
+        ruta = os.path.join(CARPETA_COLA, nombre)
+        try:
+            with open(ruta) as f:
+                job = json.load(f)
+            if job.get("estado") in ("completado", "error"):
+                limpiar_trabajo(job["id"])
+                limpiados += 1
+        except Exception:
+            pass
+    return jsonify({"ok": True, "limpiados": limpiados})
 
 
 # --- Perfiles de color ---
@@ -435,46 +647,17 @@ def imprimir():
     except Exception:
         return jsonify({"error": "Imagen en formato inválido"}), 400
 
-    ruta_imagen = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            tmp.write(imagen_bytes)
-            ruta_imagen = tmp.name
+    # Persistent queue: image saved to disk BEFORE printing
+    job_id = guardar_trabajo(imagen_bytes, copias, impresora, perfil_archivo)
+    ok, msg = ejecutar_trabajo(job_id)
 
-        if perfil_archivo:
-            ruta_perfil = os.path.join(CARPETA_PERFILES, secure_filename(perfil_archivo))
-            if os.path.isfile(ruta_perfil):
-                ruta_convertida = ruta_imagen + "_perfil.png"
-                conv = subprocess.run(
-                    ["convert", ruta_imagen, "-profile", ruta_perfil, ruta_convertida],
-                    capture_output=True, text=True, timeout=30,
-                )
-                if conv.returncode == 0 and os.path.isfile(ruta_convertida):
-                    os.unlink(ruta_imagen)
-                    ruta_imagen = ruta_convertida
-
-        cmd = ["lp", "-n", str(copias), "-o", "fit-to-page"]
-        if impresora:
-            cmd += ["-d", impresora]
-        cmd.append(ruta_imagen)
-
-        resultado = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-
-        if resultado.returncode != 0:
-            return jsonify({"error": f"Error de impresión: {resultado.stderr}"}), 500
-
-        return jsonify({"ok": True, "mensaje": f"Imprimiendo {copias} copia(s)…"})
-
-    except subprocess.TimeoutExpired:
-        return jsonify({"error": "Tiempo de espera agotado"}), 500
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        if ruta_imagen and os.path.isfile(ruta_imagen):
-            os.unlink(ruta_imagen)
+    if ok:
+        return jsonify({"ok": True, "mensaje": msg, "trabajo": job_id})
+    return jsonify({"error": f"Error de impresión: {msg}"}), 500
 
 
 if __name__ == "__main__":
+    reanudar_cola()
     t = threading.Thread(target=watcher_ftp, daemon=True)
     t.start()
     app.run(host="0.0.0.0", port=5000, debug=False)
